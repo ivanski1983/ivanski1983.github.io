@@ -1,89 +1,77 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Back-Camera Barcode Scanner</title>
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0"></script>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 16px; }
-    video { width: 100%; max-width: 520px; background:#000; border-radius: 12px; }
-    .row { display:flex; gap:8px; margin:12px 0; }
-    button { padding:10px 14px; border-radius: 10px; border:1px solid #ddd; }
-    #result { font-weight: 700; margin-top: 8px; }
-    #error { color:#b00020; white-space:pre-wrap; margin-top:8px; }
-    #hint { color:#444; font-size:14px; line-height:1.2; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Camera Test (Back Camera)</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:16px}
+  video{width:100%;max-width:520px;background:#000;border-radius:12px}
+  .row{display:flex;gap:8px;margin:12px 0}
+  button{padding:10px 14px;border:1px solid #ddd;border-radius:10px}
+  #log{white-space:pre-wrap;color:#b00020;margin-top:8px}
+</style>
 </head>
 <body>
-  <h1>Barcode Scanner (Forces Back Camera)</h1>
-  <p id="hint">Tip: Use this over <b>HTTPS</b>. On iPhone, open in Safari (Settings → Safari → Camera → Allow).</p>
+<h1>Camera Test (Back Camera)</h1>
+<video id="v" playsinline muted></video>
+<div class="row">
+  <button id="start">Start</button>
+  <button id="stop" disabled>Stop</button>
+</div>
+<pre id="log"></pre>
 
-  <video id="preview" playsinline muted autoplay></video>
+<script>
+const v = document.getElementById('v');
+const log = (msg)=>{ document.getElementById('log').textContent = String(msg); };
 
-  <div class="row">
-    <button id="start">Start</button>
-    <button id="stop" disabled>Stop</button>
-  </div>
+let stream;
 
-  <div id="result">Result: <span id="text">—</span></div>
-  <div id="error"></div>
+async function start() {
+  document.getElementById('start').disabled = true;
+  document.getElementById('stop').disabled = false;
+  log('');
 
-  <script>
-    const video = document.getElementById('preview');
-    const btnStart = document.getElementById('start');
-    const btnStop  = document.getElementById('stop');
-    const outText  = document.getElementById('text');
-    const outErr   = document.getElementById('error');
-
-    // Keep one global reader
-    const reader = new ZXing.BrowserMultiFormatReader();
-    let activeDeviceId = null;
-
-    function logErr(e, prefix="") {
-      console.error(prefix, e);
-      outErr.textContent = (prefix ? prefix + "\n" : "") + (e && e.message ? e.message : String(e));
+  try {
+    // Ask for rear camera first
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width:{ideal:1280}, height:{ideal:720} },
+      audio: false
+    });
+  } catch(e1) {
+    // Fallback: any camera
+    log('Rear camera failed, trying default...\n' + e1);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch(e2) {
+      log('Could not start camera.\n' + e2 + '\n\nChecklist:\n• Use HTTPS\n• Safari > Settings > Camera > Allow\n• Close other camera apps\n• If managed device, camera may be restricted');
+      document.getElementById('start').disabled = false;
+      document.getElementById('stop').disabled = true;
+      return;
     }
+  }
 
-    async function getRearDeviceId() {
-      // After permission, device labels become available on iOS.
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter(d => d.kind === 'videoinput');
-      if (!cams.length) return null;
+  try {
+    v.srcObject = stream;
+    await v.play(); // <-- IMPORTANT on iOS
+  } catch (e3) {
+    log('Video play() failed:\n' + e3);
+  }
 
-      // Look for labels hinting back/rear/environment
-      const rear = cams.find(d => /back|rear|environment/i.test(d.label));
-      if (rear) return rear.deviceId;
+  // Show actual track info
+  const track = stream.getVideoTracks()[0];
+  log('Camera started:\n' + (track && track.label ? track.label : '(no label)'));
+}
 
-      // Heuristic: on many phones, the last videoinput is the rear camera
-      return cams[cams.length - 1].deviceId;
-    }
+function stop() {
+  if (stream) stream.getTracks().forEach(t=>t.stop());
+  v.srcObject = null;
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+}
 
-    async function unlockLabelsIfNeeded() {
-      // If labels are empty on iOS, open a throwaway stream to unlock them
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const noLabels = devices.some(d => d.kind === 'videoinput' && !d.label);
-      if (!noLabels) return;
-
-      const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      tmp.getTracks().forEach(t => t.stop());
-    }
-
-    async function startWithFacingMode() {
-      // Preferred: ask for the environment camera by constraint (simple path)
-      await reader.decodeFromConstraints(
-        { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-        video,
-        (result, err) => {
-          if (result) outText.textContent = result.getText();
-        }
-      );
-    }
-
-    async function startWithDeviceId(deviceId) {
-      await reader.decodeFromVideoDevice(
-        deviceId,
-        video,
-
-
-
+document.getElementById('start').addEventListener('click', start);
+document.getElementById('stop').addEventListener('click', stop);
+</script>
+</body>
+</html>
