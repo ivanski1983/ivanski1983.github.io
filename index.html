@@ -3,21 +3,23 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ZXing Back-Camera Scanner</title>
-  <!-- ZXing core library -->
+  <title>Back-Camera Barcode Scanner</title>
   <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0"></script>
   <style>
     body { font-family: system-ui, sans-serif; margin: 16px; }
-    video { width: 100%; max-width: 520px; background:#000; }
+    video { width: 100%; max-width: 520px; background:#000; border-radius: 12px; }
     .row { display:flex; gap:8px; margin:12px 0; }
-    #result { font-weight: 600; margin-top: 8px; }
-    #error { color: #b00020; white-space: pre-wrap; }
+    button { padding:10px 14px; border-radius: 10px; border:1px solid #ddd; }
+    #result { font-weight: 700; margin-top: 8px; }
+    #error { color:#b00020; white-space:pre-wrap; margin-top:8px; }
+    #hint { color:#444; font-size:14px; line-height:1.2; }
   </style>
 </head>
 <body>
-  <h1>Barcode Scanner (Back Camera)</h1>
+  <h1>Barcode Scanner (Forces Back Camera)</h1>
+  <p id="hint">Tip: Use this over <b>HTTPS</b>. On iPhone, open in Safari (Settings → Safari → Camera → Allow).</p>
 
-  <video id="preview" playsinline muted></video>
+  <video id="preview" playsinline muted autoplay></video>
 
   <div class="row">
     <button id="start">Start</button>
@@ -30,76 +32,58 @@
   <script>
     const video = document.getElementById('preview');
     const btnStart = document.getElementById('start');
-    const btnStop = document.getElementById('stop');
-    const outText = document.getElementById('text');
-    const outErr  = document.getElementById('error');
+    const btnStop  = document.getElementById('stop');
+    const outText  = document.getElementById('text');
+    const outErr   = document.getElementById('error');
 
-    // ZXing reader
-    const codeReader = new ZXing.BrowserMultiFormatReader();
+    // Keep one global reader
+    const reader = new ZXing.BrowserMultiFormatReader();
+    let activeDeviceId = null;
 
-    // Helper: start with back camera; if that fails, fall back to "any camera"
-    async function startScanner() {
-      outErr.textContent = '';
-      outText.textContent = '—';
+    function logErr(e, prefix="") {
+      console.error(prefix, e);
+      outErr.textContent = (prefix ? prefix + "\n" : "") + (e && e.message ? e.message : String(e));
+    }
 
-      // Constraints that prefer the rear camera
-      const rearConstraints = {
-        video: {
-          facingMode: { ideal: 'environment' }, // back camera
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: false
-      };
+    async function getRearDeviceId() {
+      // After permission, device labels become available on iOS.
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      if (!cams.length) return null;
 
-      try {
-        await codeReader.decodeFromConstraints(
-          rearConstraints,
-          video,
-          (result, err) => {
-            if (result) {
-              outText.textContent = result.getText();
-              // If you want to stop on first successful scan:
-              // codeReader.reset();
-              // btnStart.disabled = false; btnStop.disabled = true;
-            }
-            // ZXing provides frequent decode errors while scanning; ignore them.
-          }
-        );
-        btnStart.disabled = true;
-        btnStop.disabled = false;
-      } catch (e) {
-        // Fallback: try without facingMode (use whatever camera the browser gives)
-        outErr.textContent = 'Rear camera failed, trying default camera...\n' + String(e);
-        try {
-          await codeReader.decodeFromConstraints(
-            { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-            video,
-            (result, err) => {
-              if (result) outText.textContent = result.getText();
-            }
-          );
-          btnStart.disabled = true;
-          btnStop.disabled = false;
-        } catch (e2) {
-          outErr.textContent = 'Could not start camera.\n' + String(e2) +
-            '\n\nTips:\n• You must open this page over HTTPS (or localhost)\n' +
-            '• Allow camera permission when prompted\n' +
-            '• On iOS, use Safari or Chrome with camera permission enabled\n' +
-            '• Close other apps/pages that might be using the camera';
+      // Look for labels hinting back/rear/environment
+      const rear = cams.find(d => /back|rear|environment/i.test(d.label));
+      if (rear) return rear.deviceId;
+
+      // Heuristic: on many phones, the last videoinput is the rear camera
+      return cams[cams.length - 1].deviceId;
+    }
+
+    async function unlockLabelsIfNeeded() {
+      // If labels are empty on iOS, open a throwaway stream to unlock them
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const noLabels = devices.some(d => d.kind === 'videoinput' && !d.label);
+      if (!noLabels) return;
+
+      const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      tmp.getTracks().forEach(t => t.stop());
+    }
+
+    async function startWithFacingMode() {
+      // Preferred: ask for the environment camera by constraint (simple path)
+      await reader.decodeFromConstraints(
+        { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+        video,
+        (result, err) => {
+          if (result) outText.textContent = result.getText();
         }
-      }
+      );
     }
 
-    function stopScanner() {
-      codeReader.reset(); // stops the stream and releases the camera
-      btnStart.disabled = false;
-      btnStop.disabled = true;
-    }
+    async function startWithDeviceId(deviceId) {
+      await reader.decodeFromVideoDevice(
+        deviceId,
+        video,
 
-    btnStart.addEventListener('click', startScanner);
-    btnStop.addEventListener('click', stopScanner);
-  </script>
-</body>
-</html>
+
 
