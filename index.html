@@ -5,31 +5,36 @@
   <title>ZXing Barcode Scanner</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; margin: 16px; }
-    video { width: 100%; max-width: 480px; border: 2px solid #ccc; border-radius: 8px; }
-    .big { font-size: 1.2rem; margin: 12px 0; }
-    button { font-size: 1.1rem; padding: 10px 14px; border-radius: 8px; }
-    #codeBox { font-size: 1.2rem; padding: 10px; border: 2px dashed #3a3; margin-top: 8px; display: inline-block; }
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    video { width: 100%; max-width: 520px; border: 2px solid #ccc; border-radius: 12px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    button, select { font-size: 1rem; padding: 10px 12px; border-radius: 10px; }
+    #codeBox { font-size: 1.1rem; padding: 10px; border: 2px dashed #3a3; margin-top: 8px; display: inline-block; min-width: 200px; }
+    #msg { color: #b00; margin-top: 8px; white-space: pre-line; }
   </style>
 </head>
 <body>
   <h1>Scan a Barcode</h1>
-  <p class="big">1) Tap “Start Camera” → 2) Point at the barcode → 3) Tap “Copy Code” → 4) Paste in your game</p>
+  <p>Tap <b>Start</b> → Point at the barcode → Tap <b>Copy</b>.</p>
 
-  <div>
+  <div class="row">
     <label for="cameraSelect">Camera:</label>
     <select id="cameraSelect"></select>
-    <button id="startBtn">Start Camera</button>
+    <button id="startBtn">Start</button>
     <button id="stopBtn" disabled>Stop</button>
   </div>
 
   <video id="preview" playsinline></video>
 
-  <div class="big">Last code found:</div>
-  <div id="codeBox">—</div><br>
-  <button id="copyBtn" disabled>Copy Code</button>
+  <div class="row" style="margin-top:10px;">
+    <div>Last code:</div>
+    <div id="codeBox">—</div>
+    <button id="copyBtn" disabled>Copy</button>
+  </div>
 
-  <!-- ZXing (official JS build) -->
+  <div id="msg"></div>
+
+  <!-- ZXing -->
   <script src="https://unpkg.com/@zxing/library@0.21.2"></script>
   <script>
     const video = document.getElementById('preview');
@@ -38,50 +43,73 @@
     const stopBtn  = document.getElementById('stopBtn');
     const copyBtn  = document.getElementById('copyBtn');
     const codeBox  = document.getElementById('codeBox');
+    const msg      = document.getElementById('msg');
 
     const codeReader = new ZXing.BrowserMultiFormatReader();
     let currentDeviceId = null;
-    let scanning = false;
+    let running = false;
+
+    function say(t){ msg.textContent = t || ""; }
+
+    async function ensurePermissionOnce() {
+      // Some browsers need a user-gesture-triggered call before devices list/labels work.
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        stream.getTracks().forEach(t => t.stop());
+      } catch (e) {
+        throw new Error("Camera permission denied or unavailable.\nTips:\n• Use HTTPS (or localhost)\n• Allow camera when prompted\n• Try Chrome on Android or Safari on iOS");
+      }
+    }
 
     async function listCameras() {
       const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-      camSelect.innerHTML = '';
+      camSelect.innerHTML = "";
       devices.forEach((d, i) => {
         const opt = document.createElement('option');
         opt.value = d.deviceId;
         opt.textContent = d.label || `Camera ${i+1}`;
         camSelect.appendChild(opt);
       });
-      if (devices[0]) currentDeviceId = devices[0].deviceId;
+      // Prefer a 'back' or 'rear' camera if labels are available
+      const back = devices.find(d => (d.label || "").toLowerCase().includes("back") || (d.label || "").toLowerCase().includes("rear"));
+      currentDeviceId = (back || devices[0])?.deviceId || null;
+      if (currentDeviceId) camSelect.value = currentDeviceId;
       camSelect.onchange = () => currentDeviceId = camSelect.value;
+      if (!devices.length) throw new Error("No cameras found.\nIf on iOS, make sure the page is HTTPS.");
     }
 
     async function start() {
-      if (!currentDeviceId) await listCameras();
-      scanning = true;
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
+      say("");
       copyBtn.disabled = true;
-      codeBox.textContent = '—';
+      codeBox.textContent = "—";
       try {
-        await codeReader.decodeFromVideoDevice(currentDeviceId, video, (result, err) => {
+        await ensurePermissionOnce();
+        await listCameras();
+
+        running = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+        // If deviceId is missing (labels hidden), ask for environment camera
+        const devId = currentDeviceId || undefined;
+
+        await codeReader.decodeFromVideoDevice(devId, video, (result, err) => {
           if (result) {
             codeBox.textContent = result.getText();
             copyBtn.disabled = false;
-            // Small haptic/visual feedback
             codeBox.style.background = '#eaffea';
-            setTimeout(()=> codeBox.style.background = '', 200);
+            setTimeout(() => codeBox.style.background = '', 150);
           }
         });
-      } catch (e) {
-        alert('Could not start camera. Allow camera permission and try again.');
+      } catch(e) {
+        say(e.message || String(e));
         startBtn.disabled = false;
         stopBtn.disabled = true;
       }
     }
 
     function stop() {
-      scanning = false;
+      running = false;
       codeReader.reset();
       startBtn.disabled = false;
       stopBtn.disabled = true;
@@ -89,28 +117,23 @@
 
     async function copy() {
       const text = codeBox.textContent;
-      if (text && text !== '—') {
-        try {
-          await navigator.clipboard.writeText(text);
-          copyBtn.textContent = 'Copied!';
-          setTimeout(()=> copyBtn.textContent = 'Copy Code', 1200);
-        } catch {
-          // Fallback: select text for manual copy
-          const r = document.createRange();
-          r.selectNodeContents(codeBox);
-          const s = window.getSelection();
-          s.removeAllRanges(); s.addRange(r);
-          alert('Press Ctrl+C (or tap Copy) to copy.');
-        }
+      if (!text || text === "—") return;
+      try {
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent = "Copied!";
+        setTimeout(()=> copyBtn.textContent = "Copy", 1200);
+      } catch {
+        const r = document.createRange();
+        r.selectNodeContents(codeBox);
+        const s = window.getSelection();
+        s.removeAllRanges(); s.addRange(r);
+        alert("Press Copy or Ctrl+C");
       }
     }
 
     startBtn.onclick = start;
-    stopBtn.onclick = stop;
-    copyBtn.onclick = copy;
-
-    // Prepare camera list on load
-    listCameras();
+    stopBtn.onclick  = stop;
+    copyBtn.onclick  = copy;
   </script>
 </body>
 </html>
