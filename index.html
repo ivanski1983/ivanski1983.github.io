@@ -1,1 +1,109 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ZXing Scanner (SE-safe)</title>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0"></script>
+<style>
+ body{font-family:system-ui,sans-serif;margin:16px}
+ video{width:100%;max-width:520px;background:#000;border-radius:12px}
+ button{padding:10px 14px;border:1px solid #ddd;border-radius:10px;margin-right:8px}
+ pre{white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:8px}
+ #res{font-weight:700;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>Barcode Scanner (iPhone SE)</h1>
+<video id="vid" playsinline muted></video><br/>
+<button id="start">Start</button>
+<button id="stop" disabled>Stop</button>
+<div id="res">Result: <span id="text">—</span></div>
+<pre id="log">Log…</pre>
+
+<script>
+const v = document.getElementById('vid');
+const log = (m)=>{ document.getElementById('log').textContent = String(m); };
+const out = document.getElementById('text');
+let stream, reader;
+
+async function start(){
+  document.getElementById('start').disabled = true;
+  document.getElementById('stop').disabled = false;
+  out.textContent = '—'; log('Starting…');
+
+  // 1) Start camera FIRST (helps iOS SE)
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 640, max: 1280 },
+        height: { ideal: 480, max: 720 }
+      },
+      audio: false
+    });
+  } catch(e){
+    log('getUserMedia failed:\n' + e);
+    document.getElementById('start').disabled = false;
+    document.getElementById('stop').disabled = true;
+    return;
+  }
+
+  v.srcObject = stream;
+  try { await v.play(); } catch(e){ log('video.play() error:\n' + e); }
+
+  // 2) Create ZXing with strong hints + modest cadence
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A,
+    ZXing.BarcodeFormat.UPC_E,
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.ITF,
+    ZXing.BarcodeFormat.QR_CODE
+  ]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
+
+  reader = new ZXing.BrowserMultiFormatReader(hints, 220);
+
+  // 3) Bind reader to existing video element
+  try {
+    await reader.decodeFromVideoElement(v, (result, err) => {
+      if (result) {
+        out.textContent = result.getText();
+        // Optional: stop after first decode
+        // stop();
+      }
+      // ignore continuous decode errors
+    });
+  } catch(e){
+    log('decodeFromVideoElement error:\n' + e);
+  }
+
+  // 4) Show actual camera info
+  try {
+    const t = stream.getVideoTracks()[0];
+    const s = t.getSettings?.() || {};
+    log('Camera: ' + (t?.label || '(no label)') + '\n' + JSON.stringify(s, null, 2));
+  } catch {}
+}
+
+function stop(){
+  try { reader?.reset(); } catch {}
+  try { stream?.getTracks?.().forEach(t=>t.stop()); } catch {}
+  v.srcObject = null;
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+  log('Stopped');
+}
+
+document.getElementById('start').addEventListener('click', start);
+document.getElementById('stop').addEventListener('click', stop);
+</script>
+</body>
+</html>
+
 
