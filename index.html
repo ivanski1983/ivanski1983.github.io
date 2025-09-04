@@ -1,139 +1,105 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>ZXing Barcode Scanner</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZXing Back-Camera Scanner</title>
+  <!-- ZXing core library -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0"></script>
   <style>
     body { font-family: system-ui, sans-serif; margin: 16px; }
-    video { width: 100%; max-width: 520px; border: 2px solid #ccc; border-radius: 12px; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
-    button, select { font-size: 1rem; padding: 10px 12px; border-radius: 10px; }
-    #codeBox { font-size: 1.1rem; padding: 10px; border: 2px dashed #3a3; margin-top: 8px; display: inline-block; min-width: 200px; }
-    #msg { color: #b00; margin-top: 8px; white-space: pre-line; }
+    video { width: 100%; max-width: 520px; background:#000; }
+    .row { display:flex; gap:8px; margin:12px 0; }
+    #result { font-weight: 600; margin-top: 8px; }
+    #error { color: #b00020; white-space: pre-wrap; }
   </style>
 </head>
 <body>
-  <h1>Scan a Barcode</h1>
-  <p>Tap <b>Start</b> → Point at the barcode → Tap <b>Copy</b>.</p>
+  <h1>Barcode Scanner (Back Camera)</h1>
+
+  <video id="preview" playsinline muted></video>
 
   <div class="row">
-    <label for="cameraSelect">Camera:</label>
-    <select id="cameraSelect"></select>
-    <button id="startBtn">Start</button>
-    <button id="stopBtn" disabled>Stop</button>
+    <button id="start">Start</button>
+    <button id="stop" disabled>Stop</button>
   </div>
 
-  <video id="preview" playsinline></video>
+  <div id="result">Result: <span id="text">—</span></div>
+  <div id="error"></div>
 
-  <div class="row" style="margin-top:10px;">
-    <div>Last code:</div>
-    <div id="codeBox">—</div>
-    <button id="copyBtn" disabled>Copy</button>
-  </div>
-
-  <div id="msg"></div>
-
-  <!-- ZXing -->
-  <script src="https://unpkg.com/@zxing/library@0.21.2"></script>
   <script>
     const video = document.getElementById('preview');
-    const camSelect = document.getElementById('cameraSelect');
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn  = document.getElementById('stopBtn');
-    const copyBtn  = document.getElementById('copyBtn');
-    const codeBox  = document.getElementById('codeBox');
-    const msg      = document.getElementById('msg');
+    const btnStart = document.getElementById('start');
+    const btnStop = document.getElementById('stop');
+    const outText = document.getElementById('text');
+    const outErr  = document.getElementById('error');
 
+    // ZXing reader
     const codeReader = new ZXing.BrowserMultiFormatReader();
-    let currentDeviceId = null;
-    let running = false;
 
-    function say(t){ msg.textContent = t || ""; }
+    // Helper: start with back camera; if that fails, fall back to "any camera"
+    async function startScanner() {
+      outErr.textContent = '';
+      outText.textContent = '—';
 
-    async function ensurePermissionOnce() {
-      // Some browsers need a user-gesture-triggered call before devices list/labels work.
+      // Constraints that prefer the rear camera
+      const rearConstraints = {
+        video: {
+          facingMode: { ideal: 'environment' }, // back camera
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      };
+
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        stream.getTracks().forEach(t => t.stop());
-      } catch (e) {
-        throw new Error("Camera permission denied or unavailable.\nTips:\n• Use HTTPS (or localhost)\n• Allow camera when prompted\n• Try Chrome on Android or Safari on iOS");
-      }
-    }
-
-    async function listCameras() {
-      const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-      camSelect.innerHTML = "";
-      devices.forEach((d, i) => {
-        const opt = document.createElement('option');
-        opt.value = d.deviceId;
-        opt.textContent = d.label || `Camera ${i+1}`;
-        camSelect.appendChild(opt);
-      });
-      // Prefer a 'back' or 'rear' camera if labels are available
-      const back = devices.find(d => (d.label || "").toLowerCase().includes("back") || (d.label || "").toLowerCase().includes("rear"));
-      currentDeviceId = (back || devices[0])?.deviceId || null;
-      if (currentDeviceId) camSelect.value = currentDeviceId;
-      camSelect.onchange = () => currentDeviceId = camSelect.value;
-      if (!devices.length) throw new Error("No cameras found.\nIf on iOS, make sure the page is HTTPS.");
-    }
-
-    async function start() {
-      say("");
-      copyBtn.disabled = true;
-      codeBox.textContent = "—";
-      try {
-        await ensurePermissionOnce();
-        await listCameras();
-
-        running = true;
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-
-        // If deviceId is missing (labels hidden), ask for environment camera
-        const devId = currentDeviceId || undefined;
-
-        await codeReader.decodeFromVideoDevice(devId, video, (result, err) => {
-          if (result) {
-            codeBox.textContent = result.getText();
-            copyBtn.disabled = false;
-            codeBox.style.background = '#eaffea';
-            setTimeout(() => codeBox.style.background = '', 150);
+        await codeReader.decodeFromConstraints(
+          rearConstraints,
+          video,
+          (result, err) => {
+            if (result) {
+              outText.textContent = result.getText();
+              // If you want to stop on first successful scan:
+              // codeReader.reset();
+              // btnStart.disabled = false; btnStop.disabled = true;
+            }
+            // ZXing provides frequent decode errors while scanning; ignore them.
           }
-        });
-      } catch(e) {
-        say(e.message || String(e));
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
+        );
+        btnStart.disabled = true;
+        btnStop.disabled = false;
+      } catch (e) {
+        // Fallback: try without facingMode (use whatever camera the browser gives)
+        outErr.textContent = 'Rear camera failed, trying default camera...\n' + String(e);
+        try {
+          await codeReader.decodeFromConstraints(
+            { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+            video,
+            (result, err) => {
+              if (result) outText.textContent = result.getText();
+            }
+          );
+          btnStart.disabled = true;
+          btnStop.disabled = false;
+        } catch (e2) {
+          outErr.textContent = 'Could not start camera.\n' + String(e2) +
+            '\n\nTips:\n• You must open this page over HTTPS (or localhost)\n' +
+            '• Allow camera permission when prompted\n' +
+            '• On iOS, use Safari or Chrome with camera permission enabled\n' +
+            '• Close other apps/pages that might be using the camera';
+        }
       }
     }
 
-    function stop() {
-      running = false;
-      codeReader.reset();
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
+    function stopScanner() {
+      codeReader.reset(); // stops the stream and releases the camera
+      btnStart.disabled = false;
+      btnStop.disabled = true;
     }
 
-    async function copy() {
-      const text = codeBox.textContent;
-      if (!text || text === "—") return;
-      try {
-        await navigator.clipboard.writeText(text);
-        copyBtn.textContent = "Copied!";
-        setTimeout(()=> copyBtn.textContent = "Copy", 1200);
-      } catch {
-        const r = document.createRange();
-        r.selectNodeContents(codeBox);
-        const s = window.getSelection();
-        s.removeAllRanges(); s.addRange(r);
-        alert("Press Copy or Ctrl+C");
-      }
-    }
-
-    startBtn.onclick = start;
-    stopBtn.onclick  = stop;
-    copyBtn.onclick  = copy;
+    btnStart.addEventListener('click', startScanner);
+    btnStop.addEventListener('click', stopScanner);
   </script>
 </body>
 </html>
+
