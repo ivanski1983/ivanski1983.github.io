@@ -1,1 +1,88 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ZXing Scanner (Back Camera)</title>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0"></script>
+<style>
+  body{font-family:system-ui,sans-serif;margin:16px}
+  video{width:100%;max-width:520px;background:#000;border-radius:12px}
+  .row{display:flex;gap:8px;margin:12px 0}
+  button{padding:10px 14px;border:1px solid #ddd;border-radius:10px}
+  #err{white-space:pre-wrap;color:#b00020;margin-top:8px}
+  #res{font-weight:700;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>ZXing Scanner (Back Camera)</h1>
+<video id="v" playsinline muted></video>
+<div class="row">
+  <button id="start">Start</button>
+  <button id="stop" disabled>Stop</button>
+</div>
+<div id="res">Result: <span id="text">—</span></div>
+<pre id="err"></pre>
+
+<script>
+const v = document.getElementById('v');
+const out = document.getElementById('text');
+const err = document.getElementById('err');
+const reader = new ZXing.BrowserMultiFormatReader();
+let running = false;
+
+function showErr(e,p=''){ console.error(p,e); err.textContent = (p? p+'\n':'') + (e?.message || String(e)); }
+
+async function start() {
+  err.textContent = ''; out.textContent = '—';
+  document.getElementById('start').disabled = true;
+  document.getElementById('stop').disabled = false;
+  running = true;
+
+  // Strategy: 1) constraints with environment; if decode doesn’t paint, we still
+  // force v.play() to ensure iOS starts rendering frames.
+  try {
+    await reader.decodeFromConstraints(
+      { video: { facingMode: { ideal: 'environment' }, width:{ideal:1280}, height:{ideal:720} }, audio:false },
+      v,
+      (result, zerr) => { if (result) out.textContent = result.getText(); /* ignore decode errors */ }
+    );
+    // Safari sometimes needs an explicit play() even after decodeFromConstraints
+    try { await v.play(); } catch(ePlay){ /* ignore if already playing */ }
+  } catch (e1) {
+    showErr(e1, 'FacingMode failed; trying deviceId approach…');
+    try {
+      // Unlock labels if hidden on iOS
+      const tmp = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+      tmp.getTracks().forEach(t=>t.stop());
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d=>d.kind==='videoinput');
+      if (!cams.length) throw new Error('No cameras found.');
+      const rear = cams.find(d=>/back|rear|environment/i.test(d.label)) || cams[cams.length-1];
+      await reader.decodeFromVideoDevice(rear.deviceId, v, (result, zerr)=>{
+        if (result) out.textContent = result.getText();
+      });
+      try { await v.play(); } catch(ePlay2){}
+    } catch(e2) {
+      showErr(e2, 'Could not start camera.\n\nChecklist:\n• Use HTTPS (GitHub Pages)\n• Safari > Settings > Camera > Allow\n• Close other camera apps\n• If managed device, camera may be restricted');
+      document.getElementById('start').disabled = false;
+      document.getElementById('stop').disabled = true;
+      running = false;
+    }
+  }
+}
+
+function stop() {
+  running = false;
+  try { reader.reset(); } catch {}
+  v.srcObject = null;
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+}
+document.getElementById('start').addEventListener('click', start);
+document.getElementById('stop').addEventListener('click', stop);
+</script>
+</body>
+</html>
+
 
