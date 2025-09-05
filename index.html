@@ -1,109 +1,225 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ZXing Scanner (SE-safe)</title>
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0"></script>
-<style>
- body{font-family:system-ui,sans-serif;margin:16px}
- video{width:100%;max-width:520px;background:#000;border-radius:12px}
- button{padding:10px 14px;border:1px solid #ddd;border-radius:10px;margin-right:8px}
- pre{white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:8px}
- #res{font-weight:700;margin-top:8px}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barcode & QR Code Scanner</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Font 'Inter' -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.3s ease;
+            background-color: #0d1117; /* Default dark background */
+        }
+        /* Style for the background image, which you can add later */
+        body.with-bg-image {
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }
+        .scanner-container {
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 1; /* Make the container square */
+            overflow: hidden;
+            position: relative;
+        }
+        #reader {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        /* Custom message box styling */
+        .message-box {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #2a2a2a;
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+        }
+    </style>
 </head>
-<body>
-<h1>Barcode Scanner (iPhone SE)</h1>
-<video id="vid" playsinline muted></video><br/>
-<button id="start">Start</button>
-<button id="stop" disabled>Stop</button>
-<div id="res">Result: <span id="text">—</span></div>
-<pre id="log">Log…</pre>
+<body class="bg-gray-900 text-gray-100 flex flex-col items-center min-h-screen p-4">
 
-<script>
-const v = document.getElementById('vid');
-const log = (m)=>{ document.getElementById('log').textContent = String(m); };
-const out = document.getElementById('text');
-let stream, reader;
+    <!-- Main Container -->
+    <div class="flex flex-col items-center w-full max-w-2xl bg-gray-800 rounded-2xl shadow-lg p-6 sm:p-8 space-y-6 md:space-y-8">
+        <h1 class="text-3xl sm:text-4xl font-bold text-center text-indigo-400">
+            QR & Barcode Scanner
+        </h1>
+        <p class="text-center text-gray-400 max-w-prose">
+            Point your camera at a QR code or barcode to get an instant result. The scanned data will appear below.
+        </p>
 
-async function start(){
-  document.getElementById('start').disabled = true;
-  document.getElementById('stop').disabled = false;
-  out.textContent = '—'; log('Starting…');
+        <!-- Scanner area -->
+        <div class="w-full flex justify-center">
+            <div id="reader" class="scanner-container rounded-lg border-4 border-dashed border-gray-600 p-2 overflow-hidden"></div>
+        </div>
 
-  // 1) Start camera FIRST (helps iOS SE)
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 640, max: 1280 },
-        height: { ideal: 480, max: 720 }
-      },
-      audio: false
-    });
-  } catch(e){
-    log('getUserMedia failed:\n' + e);
-    document.getElementById('start').disabled = false;
-    document.getElementById('stop').disabled = true;
-    return;
-  }
+        <!-- Result section -->
+        <div class="w-full space-y-4">
+            <div id="result-container" class="bg-gray-700 p-4 rounded-xl shadow-inner hidden">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-lg font-semibold text-gray-300">Scanned Result:</span>
+                    <button id="copy-button" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white font-medium rounded-lg shadow-md transition-all duration-200 ease-in-out transform active:scale-95">
+                        Copy
+                    </button>
+                </div>
+                <textarea id="result-text" readonly class="w-full h-24 bg-gray-900 text-gray-300 p-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"></textarea>
+            </div>
+            <button id="scan-again-button" class="mt-4 px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg shadow-md transition-all duration-200 ease-in-out transform active:scale-95 hidden w-full">
+                Scan Again
+            </button>
+        </div>
 
-  v.srcObject = stream;
-  try { await v.play(); } catch(e){ log('video.play() error:\n' + e); }
-
-  // 2) Create ZXing with strong hints + modest cadence
-  const hints = new Map();
-  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-    ZXing.BarcodeFormat.EAN_13,
-    ZXing.BarcodeFormat.EAN_8,
-    ZXing.BarcodeFormat.UPC_A,
-    ZXing.BarcodeFormat.UPC_E,
-    ZXing.BarcodeFormat.CODE_128,
-    ZXing.BarcodeFormat.CODE_39,
-    ZXing.BarcodeFormat.ITF,
-    ZXing.BarcodeFormat.QR_CODE
-  ]);
-  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
-
-  reader = new ZXing.BrowserMultiFormatReader(hints, 220);
-
-  // 3) Bind reader to existing video element
-  try {
-    await reader.decodeFromVideoElement(v, (result, err) => {
-      if (result) {
-        out.textContent = result.getText();
-        // Optional: stop after first decode
-        // stop();
-      }
-      // ignore continuous decode errors
-    });
-  } catch(e){
-    log('decodeFromVideoElement error:\n' + e);
-  }
-
-  // 4) Show actual camera info
-  try {
-    const t = stream.getVideoTracks()[0];
-    const s = t.getSettings?.() || {};
-    log('Camera: ' + (t?.label || '(no label)') + '\n' + JSON.stringify(s, null, 2));
-  } catch {}
+        <!-- How to add a custom background image -->
+        <div class="w-full border-t border-gray-700 pt-6 text-sm text-gray-500">
+            <p class="mb-2 font-semibold text-center">Customize your background:</p>
+            <p>To use your own background image, add the following CSS to the <code>&lt;style&gt;</code> tag at the top of this file and replace the URL with your image link:</p>
+            <pre class="bg-gray-700 text-gray-300 p-4 rounded-lg mt-2 overflow-auto"><code>/* Paste this inside the &lt;style&gt; tag at the top of the file */
+body {
+    background-image: url('https://your-image-url.com/path-to-your-image.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    /* Optional: Add a semi-transparent overlay to keep text readable */
+    position: relative;
 }
-
-function stop(){
-  try { reader?.reset(); } catch {}
-  try { stream?.getTracks?.().forEach(t=>t.stop()); } catch {}
-  v.srcObject = null;
-  document.getElementById('start').disabled = false;
-  document.getElementById('stop').disabled = true;
-  log('Stopped');
+/* You can also add a color overlay */
+body::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5); /* 50% black overlay */
 }
+</code></pre>
+        </div>
+    </div>
 
-document.getElementById('start').addEventListener('click', start);
-document.getElementById('stop').addEventListener('click', stop);
-</script>
+    <!-- Message box for copy confirmation -->
+    <div id="message-box" class="message-box rounded-xl">Copied to clipboard!</div>
+
+    <!-- html5-qrcode library CDN -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const readerElement = document.getElementById('reader');
+            const resultContainer = document.getElementById('result-container');
+            const resultText = document.getElementById('result-text');
+            const copyButton = document.getElementById('copy-button');
+            const messageBox = document.getElementById('message-box');
+            const scanAgainButton = document.getElementById('scan-again-button');
+            
+            let isScanning = false;
+            let errorCount = 0;
+            const MAX_ERRORS = 15;
+            let html5QrCode;
+
+            function showMessage(message) {
+                messageBox.textContent = message;
+                messageBox.style.display = 'block';
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 2000);
+            }
+
+            // Function to handle successful scan
+            function onScanSuccess(decodedText) {
+                if (!isScanning) return;
+                isScanning = false;
+
+                html5QrCode.stop().then(() => {
+                    resultText.value = decodedText;
+                    resultContainer.classList.remove('hidden');
+                    scanAgainButton.classList.remove('hidden');
+                    readerElement.innerHTML = '';
+                }).catch(err => {
+                    console.error(`Error stopping scanner: ${err}`);
+                });
+            }
+
+            // Function to handle scan errors
+            function onScanError(errorMessage) {
+                errorCount++;
+                if (errorCount > MAX_ERRORS) {
+                    html5QrCode.stop().then(() => {
+                        showMessage('Unable to detect a code. Please ensure good lighting and a clear view.');
+                        scanAgainButton.classList.remove('hidden');
+                        readerElement.innerHTML = '';
+                    }).catch(err => {
+                        console.error(`Error stopping scanner after max errors: ${err}`);
+                    });
+                }
+            }
+
+            function startScanner() {
+                isScanning = true;
+                errorCount = 0;
+                resultContainer.classList.add('hidden');
+                resultText.value = '';
+                scanAgainButton.classList.add('hidden');
+                readerElement.innerHTML = ''; // Clear previous scanner UI
+
+                html5QrCode = new Html5Qrcode("reader");
+
+                const config = {
+                    fps: 10,
+                    qrbox: { width: 250, height: 250 },
+                    formatsToSupport: [
+                        "QR_CODE",
+                        "UPC_A",
+                        "EAN_13",
+                        "CODE_128",
+                        "DATA_MATRIX",
+                        "PDF_417"
+                    ]
+                };
+
+                html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanError)
+                    .catch(err => {
+                        console.error(`Unable to start scanning: ${err}`);
+                        showMessage('Unable to access camera. Please check your permissions.');
+                        scanAgainButton.classList.remove('hidden');
+                    });
+            }
+
+            // Start the scanner initially
+            startScanner();
+
+            // Add event listener for the copy button
+            copyButton.addEventListener('click', () => {
+                const textToCopy = resultText.value;
+                if (textToCopy) {
+                    try {
+                        resultText.select();
+                        document.execCommand('copy');
+                        showMessage('Copied to clipboard!');
+                    } catch (err) {
+                        console.error('Failed to copy text: ', err);
+                        showMessage('Failed to copy text.');
+                    }
+                }
+            });
+
+            // Add event listener for the "Scan Again" button
+            scanAgainButton.addEventListener('click', () => {
+                startScanner();
+            });
+        });
+    </script>
+
 </body>
 </html>
-
-
